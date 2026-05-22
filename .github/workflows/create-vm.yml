@@ -36,7 +36,6 @@ jobs:
         echo "tenancy=${{ secrets.OCI_CLI_TENANCY }}" >> ~/.oci/config
         echo "region=${{ secrets.OCI_CLI_REGION }}" >> ~/.oci/config
         echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
-        # 直接写入私钥，删除了报错的 base64 转换步骤
         echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/oci_api_key.pem
         chmod 600 ~/.oci/oci_api_key.pem
 
@@ -44,7 +43,6 @@ jobs:
       id: create_instance
       run: |
         export OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING=1
-        # 优化了可用区选择和公钥变量名
         RESPONSE=$(oci compute instance launch \
           --availability-domain "${{ secrets.OCI_CLI_REGION }}-AD-1" \
           --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
@@ -66,6 +64,10 @@ jobs:
         elif echo "$RESPONSE" | grep -q "id"; then
           echo "status=success" >> $GITHUB_OUTPUT
         else
+          echo "========================================"
+          echo "甲骨文返回的真实报错信息如下："
+          echo "$RESPONSE"
+          echo "========================================"
           echo "status=failed" >> $GITHUB_OUTPUT
         fi
 
@@ -89,6 +91,4 @@ jobs:
         fi
         
         curl -H "Content-Type: application/json" \
-             -X POST \
-             -d "{\"embeds\": [{\"title\": \"$TITLE\", \"description\": \"$DESCRIPTION\", \"color\": $COLOR, \"fields\": [{\"name\": \"甲骨文返回信息\", \"value\": \"${RESPONSE_CLEANED:0:1020}\"}], \"timestamp\": \"$TIMESTAMP\"}]}" \
-             "${{ secrets.DISCORD_WEBHOOK_URL }}"
+             -
