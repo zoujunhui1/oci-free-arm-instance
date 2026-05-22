@@ -3,7 +3,7 @@ name: Try to Create OCI VM
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/10 * * * *' # 每 10 分钟自动运行一次
+    - cron: '*/10 * * * *' # 每 10 分钟运行一次
 
 jobs:
   oci-create-instance:
@@ -13,19 +13,14 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v3
 
-    - name: Setup PHP
-      uses: shivammathur/setup-php@v2
-      with:
-        php-version: '8.1'
-
-    - name: Install OCI CLI
+    - name: Install OCI CLI & jq
       run: |
         mkdir -p bin
         curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh -o bin/install.sh
         chmod +x bin/install.sh
         ./bin/install.sh --accept-all-defaults
         echo "/home/runner/bin" >> $GITHUB_PATH
-        exec -l $SHELL
+        sudo apt-get install jq -y
 
     - name: Configure OCI CLI
       run: |
@@ -34,7 +29,7 @@ jobs:
         echo "user=${{ secrets.OCI_CLI_USER }}" >> ~/.oci/config
         echo "fingerprint=${{ secrets.OCI_CLI_FINGERPRINT }}" >> ~/.oci/config
         echo "tenancy=${{ secrets.OCI_CLI_TENANCY }}" >> ~/.oci/config
-        echo "region=${{ secrets.OCI_CLI_REGION }}" >> ~/.oci/config
+        echo "region=us-phoenix-1" >> ~/.oci/config
         echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
         echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/oci_api_key.pem
         chmod 600 ~/.oci/oci_api_key.pem
@@ -43,17 +38,23 @@ jobs:
       id: create_instance
       run: |
         export OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING=1
-        # 此处已完美固定为凤凰城专属大写：PHX-AD-1
+        
+        echo "正在自动获取凤凰城真实可用区名称..."
+        # 自动获取第一个可用区的完整名字，彻底解决 400 CannotParseRequest 错误
+        AD_NAME=$(oci iam availability-domain list --all | jq -r '.data[0].name')
+        echo "探测到可用区：$AD_NAME"
+        
+        # 核心抢机命令：已手动写死凤凰城专属镜像和子网 ID
         RESPONSE=$(oci compute instance launch \
-          --availability-domain "PHX-AD-1" \
+          --availability-domain "$AD_NAME" \
           --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
-          --shape "${{ secrets.INSTANCE_SHAPE }}" \
-          --shape-config '{"ocpus":2,"memoryInGBs":12}' \
-          --subnet-id "${{ secrets.OCI_SUBNET_ID }}" \
-          --image-id "${{ secrets.OCI_IMAGE_ID }}" \
+          --shape "VM.Standard.A1.Flex" \
+          --shape-config '{"ocpus":4,"memoryInGBs":24}' \
+          --subnet-id "ocid1.subnet.oc1.phx.aaaaaaaafh4c5wf3uzbx4spkcipuqkpmxxrq5d2jcfr6o3oyt7nsxh7sgapq" \
+          --image-id "ocid1.image.oc1.phx.aaaaaaaak5t5srbpi3g5utsri4rb6twcvnsuvzpsmllm6jybgg3upruvjydq" \
           --assign-public-ip true \
           --metadata "{\"ssh_authorized_keys\": \"${{ secrets.OCI_SSH_PUBLIC_KEY }}\"}" \
-          --display-name "coolify-vm" \
+          --display-name "coolify-arm-vm" \
           --boot-volume-size-in-gbs 100 2>&1) || true
         
         echo "OCI_RESPONSE<<EOF" >> $GITHUB_ENV
@@ -66,8 +67,7 @@ jobs:
           echo "status=success" >> $GITHUB_OUTPUT
         else
           echo "========================================"
-          echo "甲骨文真实报错信息如下："
-          echo "$RESPONSE"
+          echo "探测结果：$RESPONSE"
           echo "========================================"
           echo "status=failed" >> $GITHUB_OUTPUT
           exit 1
@@ -81,19 +81,19 @@ jobs:
         
         if echo "${{ env.OCI_RESPONSE }}" | grep -q "Out of host capacity"; then
           COLOR=16753920 # 橙色
-          TITLE="OCI 抢机报告 - 暂时无货"
-          DESCRIPTION="目标配置无库存。脚本已完成巡逻，10分钟后继续。"
+          TITLE="凤凰城巡逻报告 - 暂时无货"
+          DESCRIPTION="所有配置已通过验证，机房暂时没有库存，脚本将持续每10分钟自动抢购一次。"
         elif echo "${{ env.OCI_RESPONSE }}" | grep -q "id"; then
           COLOR=65280 # 绿色
-          TITLE="🎉 抢到了！创建成功！"
-          DESCRIPTION="您的 ARM VM 已成功创建！请去甲骨文后台查看并禁用此脚本。"
+          TITLE="🎉 奇迹发生！凤凰城 ARM 已抢到！"
+          DESCRIPTION="您的 4核24G 服务器已创建成功。请去后台查看，并立即禁用此 GitHub Actions。"
         else
           COLOR=16711680 # 红色
-          TITLE="脚本报错"
-          DESCRIPTION="由于配置或权限错误，脚本运行失败。请检查 GitHub 日志。"
+          TITLE="脚本配置异常"
+          DESCRIPTION="检测到无法识别的报错，请检查 API 密钥或 Secrets 变量。"
         fi
         
         curl -H "Content-Type: application/json" \
              -X POST \
-             -d "{\"embeds\": [{\"title\": \"$TITLE\", \"description\": \"$DESCRIPTION\", \"color\": $COLOR, \"fields\": [{\"name\": \"甲骨文返回信息\", \"value\": \"${RESPONSE_CLEANED:0:1020}\"}], \"timestamp\": \"$TIMESTAMP\"}]}" \
+             -d "{\"embeds\": [{\"title\": \"$TITLE\", \"description\": \"$DESCRIPTION\", \"color\": $COLOR, \"fields\": [{\"name\": \"甲骨文回执\", \"value\": \"${RESPONSE_CLEANED:0:1020}\"}], \"timestamp\": \"$TIMESTAMP\"}]}" \
              "${{ secrets.DISCORD_WEBHOOK_URL }}"
