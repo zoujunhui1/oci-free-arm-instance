@@ -43,6 +43,7 @@ jobs:
       id: create_instance
       run: |
         export OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING=1
+        # 添加 || true 确保即便报错也会继续执行，从而打印出报错内容
         RESPONSE=$(oci compute instance launch \
           --availability-domain "${{ secrets.OCI_CLI_REGION }}-AD-1" \
           --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
@@ -53,7 +54,7 @@ jobs:
           --assign-public-ip true \
           --metadata "{\"ssh_authorized_keys\": \"${{ secrets.OCI_SSH_PUBLIC_KEY }}\"}" \
           --display-name "coolify-vm" \
-          --boot-volume-size-in-gbs 100 2>&1)
+          --boot-volume-size-in-gbs 100 2>&1) || true
         
         echo "OCI_RESPONSE<<EOF" >> $GITHUB_ENV
         echo "$RESPONSE" >> $GITHUB_ENV
@@ -65,30 +66,35 @@ jobs:
           echo "status=success" >> $GITHUB_OUTPUT
         else
           echo "========================================"
-          echo "甲骨文返回的真实报错信息如下："
+          echo "甲骨文真实报错信息如下："
           echo "$RESPONSE"
           echo "========================================"
           echo "status=failed" >> $GITHUB_OUTPUT
+          # 只有非"无货"且非"成功"的情况，才抛出错误中断
+          exit 1
         fi
 
     - name: Send Notification to Discord
+      if: always()
       run: |
         RESPONSE_CLEANED=$(echo "${{ env.OCI_RESPONSE }}" | tr -d '"' | tr -d "'" | tr '\n' ' ')
         TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         
         if echo "${{ env.OCI_RESPONSE }}" | grep -q "Out of host capacity"; then
           COLOR=16753920 # 橙色
-          TITLE="OCI 尝试抢机 - 目前无货"
-          DESCRIPTION="目标配置暂时无货，脚本将在 10 分钟后自动重试。"
+          TITLE="OCI 抢机报告 - 暂时无货"
+          DESCRIPTION="目标配置无库存。脚本已完成巡逻，10分钟后继续。"
         elif echo "${{ env.OCI_RESPONSE }}" | grep -q "id"; then
           COLOR=65280 # 绿色
-          TITLE="🎉 恭喜！OCI 实例创建成功！"
-          DESCRIPTION="服务器已就绪，请记得手动停止 GitHub Actions 脚本！"
+          TITLE="🎉 抢到了！创建成功！"
+          DESCRIPTION="您的 ARM VM 已成功创建！请去甲骨文后台查看并禁用此脚本。"
         else
           COLOR=16711680 # 红色
-          TITLE="OCI 创建失败"
-          DESCRIPTION="脚本运行报错，请检查 GitHub Actions 日志。"
+          TITLE="脚本报错"
+          DESCRIPTION="由于配置或权限错误，脚本运行失败。请检查 GitHub 日志。"
         fi
         
         curl -H "Content-Type: application/json" \
-             -
+             -X POST \
+             -d "{\"embeds\": [{\"title\": \"$TITLE\", \"description\": \"$DESCRIPTION\", \"color\": $COLOR, \"fields\": [{\"name\": \"甲骨文返回信息\", \"value\": \"${RESPONSE_CLEANED:0:1020}\"}], \"timestamp\": \"$TIMESTAMP\"}]}" \
+             "${{ secrets.DISCORD_WEBHOOK_URL }}"
