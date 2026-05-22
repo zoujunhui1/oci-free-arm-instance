@@ -1,0 +1,94 @@
+name: Try to Create OCI VM
+
+on:
+  dashboard:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *' # 每 10 分钟自动运行一次
+
+jobs:
+  oci-create-instance:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+
+    - name: Install OCI CLI
+      run: |
+        mkdir -p bin
+        curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh -o bin/install.sh
+        chmod +x bin/install.sh
+        ./bin/install.sh --accept-all-defaults
+        echo "/home/runner/bin" >> $GITHUB_PATH
+        exec -l $SHELL
+
+    - name: Configure OCI CLI
+      run: |
+        mkdir -p ~/.oci
+        echo "[DEFAULT]" > ~/.oci/config
+        echo "user=${{ secrets.OCI_CLI_USER }}" >> ~/.oci/config
+        echo "fingerprint=${{ secrets.OCI_CLI_FINGERPRINT }}" >> ~/.oci/config
+        echo "tenancy=${{ secrets.OCI_CLI_TENANCY }}" >> ~/.oci/config
+        echo "region=${{ secrets.OCI_CLI_REGION }}" >> ~/.oci/config
+        echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
+        echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/config_key_base64
+        base64 -d ~/.oci/config_key_base64 > ~/.oci/oci_api_key.pem
+        chmod 600 ~/.oci/oci_api_key.pem
+
+    - name: Run Create Instance Script
+      id: create_instance
+      run: |
+        export OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING=1
+        RESPONSE=$(oci compute instance launch \
+          --availability-domain "${{ secrets.AD_NAME }}" \
+          --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
+          --shape "${{ secrets.INSTANCE_SHAPE }}" \
+          --shape-config '{"ocpus":2,"memoryInGBs":12}' \
+          --subnet-id "${{ secrets.OCI_SUBNET_ID }}" \
+          --image-id "${{ secrets.OCI_IMAGE_ID }}" \
+          --assign-public-ip true \
+          --metadata '{"ssh_authorized_keys": "${{ secrets.SSH_PUBLIC_KEY }}"}' \
+          --display-name "coolify-vm" \
+          --boot-volume-size-in-gbs 100 2>&1)
+        
+        echo "OCI_RESPONSE<<EOF" >> $GITHUB_ENV
+        echo "$RESPONSE" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+        
+        if echo "$RESPONSE" | grep -q "Out of host capacity"; then
+          echo "status=capacity_error" >> $GITHUB_OUTPUT
+        elif echo "$RESPONSE" | grep -q "id"; then
+          echo "status=success" >> $GITHUB_OUTPUT
+        else
+          echo "status=failed" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Send Notification to Discord
+      run: |
+        RESPONSE_CLEANED=$(echo "${{ env.OCI_RESPONSE }}" | tr -d '"' | tr -d "'" | tr '\n' ' ')
+        TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        
+        if echo "${{ env.OCI_RESPONSE }}" | grep -q "Out of host capacity"; then
+          COLOR=16753920 # 橙色 (库存不足)
+          TITLE="OCI Instance Creation - Out of Capacity"
+          DESCRIPTION="The requested shape is currently out of capacity. Retrying in 10 minutes."
+        elif echo "${{ env.OCI_RESPONSE }}" | grep -q "id"; then
+          COLOR=65280 # 绿色 (成功)
+          TITLE="OCI Instance Created Successfully!"
+          DESCRIPTION="Your VM has been provisioned. Remember to DISABLE this workflow now!"
+        else
+          COLOR=16711680 # 红色 (其他报错)
+          TITLE="OCI Instance Creation Failed"
+          DESCRIPTION="An error occurred during instance provisioning. Check GitHub Actions logs."
+        fi
+        
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d "{\"embeds\": [{\"title\": \"$TITLE\", \"description\": \"$DESCRIPTION\", \"color\": $COLOR, \"fields\": [{\"name\": \"OCI CLI Response\", \"value\": \"${RESPONSE_CLEANED:0:1020}\"}], \"timestamp\": \"$TIMESTAMP\"}]}" \
+             "${{ secrets.DISCORD_WEBHOOK_URL }}"
