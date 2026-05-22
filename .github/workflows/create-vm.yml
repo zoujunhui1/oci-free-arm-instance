@@ -43,9 +43,9 @@ jobs:
       id: create_instance
       run: |
         export OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING=1
-        # 添加 || true 确保即便报错也会继续执行，从而打印出报错内容
+        # 此处已完美固定为凤凰城专属大写：PHX-AD-1
         RESPONSE=$(oci compute instance launch \
-          --availability-domain "${{ secrets.OCI_CLI_REGION }}-AD-1" \
+          --availability-domain "PHX-AD-1" \
           --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
           --shape "${{ secrets.INSTANCE_SHAPE }}" \
           --shape-config '{"ocpus":2,"memoryInGBs":12}' \
@@ -70,7 +70,6 @@ jobs:
           echo "$RESPONSE"
           echo "========================================"
           echo "status=failed" >> $GITHUB_OUTPUT
-          # 只有非"无货"且非"成功"的情况，才抛出错误中断
           exit 1
         fi
 
