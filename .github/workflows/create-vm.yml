@@ -36,6 +36,7 @@ jobs:
         echo "tenancy=${{ secrets.OCI_CLI_TENANCY }}" >> ~/.oci/config
         echo "region=${{ secrets.OCI_CLI_REGION }}" >> ~/.oci/config
         echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
+        # 直接写入私钥，删除了报错的 base64 转换步骤
         echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/oci_api_key.pem
         chmod 600 ~/.oci/oci_api_key.pem
 
@@ -43,15 +44,16 @@ jobs:
       id: create_instance
       run: |
         export OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING=1
+        # 优化了可用区选择和公钥变量名
         RESPONSE=$(oci compute instance launch \
-          --availability-domain "${{ secrets.AD_NAME }}" \
+          --availability-domain "${{ secrets.OCI_CLI_REGION }}-AD-1" \
           --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
           --shape "${{ secrets.INSTANCE_SHAPE }}" \
           --shape-config '{"ocpus":2,"memoryInGBs":12}' \
           --subnet-id "${{ secrets.OCI_SUBNET_ID }}" \
           --image-id "${{ secrets.OCI_IMAGE_ID }}" \
           --assign-public-ip true \
-          --metadata '{"ssh_authorized_keys": "${{ secrets.SSH_PUBLIC_KEY }}"}' \
+          --metadata "{\"ssh_authorized_keys\": \"${{ secrets.OCI_SSH_PUBLIC_KEY }}\"}" \
           --display-name "coolify-vm" \
           --boot-volume-size-in-gbs 100 2>&1)
         
@@ -73,20 +75,20 @@ jobs:
         TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         
         if echo "${{ env.OCI_RESPONSE }}" | grep -q "Out of host capacity"; then
-          COLOR=16753920 # 橙色 (库存不足)
-          TITLE="OCI Instance Creation - Out of Capacity"
-          DESCRIPTION="The requested shape is currently out of capacity. Retrying in 10 minutes."
+          COLOR=16753920 # 橙色
+          TITLE="OCI 尝试抢机 - 目前无货"
+          DESCRIPTION="目标配置暂时无货，脚本将在 10 分钟后自动重试。"
         elif echo "${{ env.OCI_RESPONSE }}" | grep -q "id"; then
-          COLOR=65280 # 绿色 (成功)
-          TITLE="OCI Instance Created Successfully!"
-          DESCRIPTION="Your VM has been provisioned. Remember to DISABLE this workflow now!"
+          COLOR=65280 # 绿色
+          TITLE="🎉 恭喜！OCI 实例创建成功！"
+          DESCRIPTION="服务器已就绪，请记得手动停止 GitHub Actions 脚本！"
         else
-          COLOR=16711680 # 红色 (其他报错)
-          TITLE="OCI Instance Creation Failed"
-          DESCRIPTION="An error occurred during instance provisioning. Check GitHub Actions logs."
+          COLOR=16711680 # 红色
+          TITLE="OCI 创建失败"
+          DESCRIPTION="脚本运行报错，请检查 GitHub Actions 日志。"
         fi
         
         curl -H "Content-Type: application/json" \
              -X POST \
-             -d "{\"embeds\": [{\"title\": \"$TITLE\", \"description\": \"$DESCRIPTION\", \"color\": $COLOR, \"fields\": [{\"name\": \"OCI CLI Response\", \"value\": \"${RESPONSE_CLEANED:0:1020}\"}], \"timestamp\": \"$TIMESTAMP\"}]}" \
+             -d "{\"embeds\": [{\"title\": \"$TITLE\", \"description\": \"$DESCRIPTION\", \"color\": $COLOR, \"fields\": [{\"name\": \"甲骨文返回信息\", \"value\": \"${RESPONSE_CLEANED:0:1020}\"}], \"timestamp\": \"$TIMESTAMP\"}]}" \
              "${{ secrets.DISCORD_WEBHOOK_URL }}"
