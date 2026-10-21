@@ -52,7 +52,7 @@ jobs:
             --availability-domain "$AD_NAME" \
             --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
             --shape "VM.Standard.A1.Flex" \
-            --shape-config '{"ocpus":4,"memoryInGBs":24}' \
+            --shape-config '{"ocpus":2,"memoryInGBs":12}' \
             --subnet-id "ocid1.subnet.oc1.phx.aaaaaaaafh4c5wf3uzbx4spkcipuqkpmxxrq5d2jcfr6o3oyt7nsxh7sgapq" \
             --image-id "ocid1.image.oc1.phx.aaaaaaaak5t5srbpi3g5utsri4rb6twcvnsuvzpsmllm6jybgg3upruvjydq" \
             --assign-public-ip true \
@@ -93,7 +93,7 @@ jobs:
         elif echo "${{ env.OCI_RESPONSE }}" | grep -q "lifecycle-state"; then
           COLOR=65280 # 绿色
           TITLE="🎉 奇迹发生！凤凰城 ARM 已抢到！"
-          DESCRIPTION="您的 4核24G 服务器已创建成功。请去后台查看，并立即禁用此 GitHub Actions。"
+          DESCRIPTION="您的 2核12G 服务器已创建成功。请去后台查看，并立即禁用此 GitHub Actions。"
         else
           COLOR=16711680 # 红色
           TITLE="脚本配置异常"
