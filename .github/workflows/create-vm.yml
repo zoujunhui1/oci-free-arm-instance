@@ -104,3 +104,27 @@ jobs:
              -X POST \
              -d "{\"embeds\": [{\"title\": \"$TITLE\", \"description\": \"$DESCRIPTION\", \"color\": $COLOR, \"fields\": [{\"name\": \"甲骨文回执\", \"value\": \"${RESPONSE_CLEANED:0:1020}\"}], \"timestamp\": \"$TIMESTAMP\"}]}" \
              "${{ secrets.DISCORD_WEBHOOK_URL }}"
+
+    - name: Send Notification to Telegram
+      if: always()
+      env:
+        TG_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
+          echo "Telegram secrets not set, skip"
+          exit 0
+        fi
+        # 没库存时不打扰，只在抢到或出错时通知
+        if echo "$OCI_RESPONSE" | grep -qiE "out of (host )?capacity"; then
+          echo "no capacity, stay quiet"
+          exit 0
+        elif echo "$OCI_RESPONSE" | grep -q "lifecycle-state"; then
+          MSG="OCI ARM instance created in Phoenix. Disable the workflow and log in now."
+        else
+          MSG="OCI workflow error. Check the GitHub Actions log."
+        fi
+        curl -s -o /dev/null -w "telegram http %{http_code}\n" \
+          "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+          --data-urlencode "chat_id=${TG_CHAT}" \
+          --data-urlencode "text=${MSG}"
